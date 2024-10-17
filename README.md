@@ -1,4 +1,4 @@
-Title: Exploring Lunar Cycles and Restaurant Reviews: Does the Full Moon Affect Guest Ratings?
+# Exploring Lunar Cycles and Restaurant Reviews: Does the Full Moon Affect Guest Ratings?
 
 Project Overview:
 This project explores whether moon phases, particularly the full moon, have an impact on restaurant guest ratings. The dataset combines Yelp reviews with moon phase data to perform statistical analysis and visualizations.
