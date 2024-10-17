@@ -1,0 +1,498 @@
+---
+title: "Exploring Lunar Cycles and Restaurant Reviews: Does the Full Moon Affect Guest Ratings?"
+author: "Predrag Tomovic"
+date: "2024-10-16"
+output: html_document
+---
+# Abstract
+
+This analysis explores whether lunar cycles, particularly full moons, impact restaurant reviews. Using a dataset of Yelp reviews and moon phase data, we performed a series of statistical tests, including ANOVA, to examine potential correlations. Early indicators from basic statistics suggest negligible differences between reviews during different moon phases. However, a range of additional analyses—such as Levene's test and various visualizations—were conducted to ensure thorough exploration and to demonstrate proficiency in R-based data analytics techniques. While the final results confirm the initial observation, this analysis also showcases various methods relevant to data-driven problem solving.
+
+
+## Introduction
+
+
+The goal of this analysis is to investigate whether the phase of the moon correlates with how restaurant guests rate their dining experience. The dataset used for this analysis consists of Yelp reviews, with ratings on a scale from 1 to 5, and corresponding moon phase data. The idea stems from anecdotal claims that full moons might influence unusual behavior, which led me to explore if this extends to dining experiences.
+
+The reviews data was sourced from [Kaggle](https://www.kaggle.com/datasets/omkarsabnis/yelp-reviews-dataset/data?select=yelp.csv), with only two columns extracted: the review rating and the date of the review. All dates were formatted to YYYY-MM-DD and checked for missing values. Moon phase data was obtained from the [United States Naval Observatory](https://aa.usno.navy.mil/calculated/moon/phases?date=2006-06-05&nump=99&format=p&submit=Get+Data) (USNO) website, where I manually compiled moon phase ranges to match the review period. As with the reviews, this dataset was cleaned and formatted to allow for comprehensive analysis.
+
+
+
+## Loading necessary packages & importing data
+
+
+To perform the data analysis and visualization, I used several libraries, each serving a specific purpose in this project:
+
+tidyverse: Essential for data wrangling and manipulation. It helps in filtering, summarizing, and transforming data (used heavily throughout the project).
+
+gtExtras: Used to enhance table outputs with added functionality, especially helpful when summarizing key statistics in a visually appealing format.
+
+car: Specifically loaded for conducting Levene’s Test, which is necessary to check the assumption of homogeneity of variances before performing ANOVA.
+
+ggridges: Used to create ridgeline plots for visualizing the distribution of review ratings across moon phases, helping to explore the spread and density of the data.
+
+viridis: A color palette package chosen for creating visualizations (like histograms and ridgeline plots) with accessible, colorblind-friendly schemes. It ensures that the color choices in the plots are both aesthetic and inclusive.
+
+```{r, message=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(gtExtras)
+library(car)
+library(ggridges)
+library(viridis)
+```
+
+Loading the data for restaurant reviews( will be named "reviews") and moon phases( will be named to "moon_phases"). 
+
+```{r loading data, warning=FALSE, message=FALSE}
+moon_phases <- read.csv("~/R practice/Reviews & Moon Phase/moon_phase - Entire time.csv")
+reviews <- read_csv("~/R practice/Reviews & Moon Phase/Reviews_full.csv")
+```
+
+In this chunk, we load the reviews dataset, which contains ratings on a 1-5 scale, and the moon phases dataset, which holds the moon phase data with corresponding dates.
+
+## Data exploration
+
+
+The glimpse function will familiarize us with preview reviews data set, while gt_plt_summary will add visual summary of the columns content. 
+
+```{r reviews preview, message=FALSE, warning=FALSE}
+
+glimpse(reviews)
+
+reviews_summary <- gt_plt_summary(reviews)
+reviews_summary
+
+```
+
+The reviews_data was already formatted in BigQuery before being passed to R studio. The loaded csv file had 10 000 rows and two columns: formatted_date which was of date, and stars that was double data type. 
+
+Now same process below, just with moon_phases data set. 
+
+```{r moon_phases preview}
+
+glimpse(moon_phases)
+
+moon_phase_summary <- gt_plt_summary(moon_phases)
+moon_phase_summary
+
+```
+
+## Data preparation
+
+
+In the moon_phases dataset, the dates were originally stored as character strings, which needed to be converted into a date format for proper analysis. A new column, date_formatted, was created to store the values from the "Date" column as actual date types. Additionally, the moon.phase column name was renamed to moon_phase to maintain consistency across all column names.
+
+Since the Date column was stored as characters, converting it into a date format (date_formatted) ensures consistency when joining the moon phase data with the reviews data, as matching dates is crucial for accurate analysis.
+
+Renaming the moon.phase column to moon_phase ensures uniformity across datasets, allowing for smoother data operations such as joins and easier reference when coding.
+
+```{r date_formatted moon_phase}
+
+# Converting to date type
+moon_phases <- moon_phases %>%
+  mutate(date_formatted = as.Date(Date, format = "%m/%d/%Y"))
+
+# Changing the name of moon.phase column to match the style of all other columns
+
+moon_phases <- moon_phases %>% 
+  rename(moon_phase = Moon.Phase)
+
+# Print the first few rows to check the result
+head(moon_phases)
+
+```
+
+
+### Final check of time periods covered in data
+
+
+The Final check of time periods covered in data ensures that the dates in the restaurant reviews and moon phases datasets align correctly. This step verifies that the moon phase data includes all necessary dates to cover the review period. By comparing the minimum and maximum dates from both datasets, we can confirm that no reviews fall outside the moon phase data's range.
+
+```{r time periods of both data frames}
+min_max_dates <- data.frame(
+  min_review_date = min(reviews$formatted_date),
+  max_review_date = max(reviews$formatted_date),
+  min_moon_phase_date = min(moon_phases$date_formatted),
+  max_moon_phase_date = max(moon_phases$date_formatted)
+)
+min_max_dates
+```
+The moon phase dataset starts 2 days earlier and ends 6 days after the review dataset. This overlap is advantageous, as it ensures that every review has a corresponding moon phase, allowing for a thorough analysis without missing data.
+
+## Moon phases as integers
+
+
+To ensure that the data from the moon_phases and reviews datasets could be accurately joined, conversion of the moon_phase column into integers was necessary. This avoids potential issues that could arise from inconsistencies in text formatting (e.g., extra spaces or typos) when attempting to join the datasets on moon phase names.
+
+The following code creates a new column, moon_phase_int, that assigns integer values to each moon phase, making it possible to perform operations such as joining the data with review ratings:
+
+```{r adding moon_phase_int}
+
+moon_phases <- moon_phases %>%
+  mutate(
+    moon_phase_int = case_when(
+      moon_phase == "New Moon" ~ 1,
+      moon_phase == "First Quarter" ~ 2,
+      moon_phase == "Full Moon" ~ 3,
+      moon_phase == "Last Quarter" ~ 4,
+      TRUE ~ NA  # Handle other values or missing data
+    )
+  )
+
+head(moon_phases)
+```
+
+
+## Joining the dataframes
+
+
+The following approach was implemented to match reviews data with corresponding moon phases. The reviews were joined with the moon_phases dataset based on the review dates. For each review, the moon phase was determined by selecting the most recent moon phase that occurred on or before the review date. This was the calculation since, as mentioned in the introduction, date values in moon_phases data marked a beginning of the moon phase.  If no moon phase data was available for a given review date, the corresponding value was returned as missing (NA).
+
+Once the most appropriate moon phase was identified, a left join operation was performed to include additional moon phase information from the moon_phases dataset. The resulting dataset contains the following columns: formatted_date (review date), stars (review rating), moon_phase (the name of the moon phase), and moon_phase_int (numerical encoding of the moon phase).
+
+This process ensures that each review is paired with the correct moon phase, preparing the data for further analysis of any potential correlation between moon phases and review ratings.
+
+```{r joining reviews and moon phases}
+
+# Join reviews and moon_phases, ensuring only one moon phase is picked for each review date
+joined_review_mp <- reviews %>%
+  mutate(
+    moon_phase_int = map_dbl(formatted_date, ~ {
+      # Filter for dates less than or equal to the current formatted_date
+      filtered_data <- moon_phases %>%
+        filter(date_formatted <= .x)
+      
+      # If no matching dates, return NA
+      if (nrow(filtered_data) == 0) {
+        return(NA)
+      }
+
+      # Select only the most recent moon phase date
+      closest_date <- filtered_data$date_formatted[which.max(filtered_data$date_formatted)]
+      closest_moon_phase_int <- filtered_data$moon_phase_int[filtered_data$date_formatted == closest_date]
+      
+      return(closest_moon_phase_int)
+    })
+  ) %>%
+  # Perform the join using moon_phase_int
+  left_join(moon_phases %>% distinct(moon_phase_int, .keep_all = TRUE), by = "moon_phase_int") %>%
+  select(formatted_date, stars, moon_phase, moon_phase_int)
+
+head(joined_review_mp)
+
+```
+
+
+
+## Basic statistics
+
+
+In this section, we calculate the mean and standard deviation of the review star ratings across different moon phases. These basic statistics help provide insight into how ratings may vary depending on the lunar cycle.
+
+```{r review mean and sd by moon phase}
+
+# Calculating the mean and standard deviation of stars for each moon_phase
+statistics_by_moon_phase <- joined_review_mp %>%
+  group_by(moon_phase) %>%
+  summarise(
+    mean_stars = mean(stars, na.rm = TRUE),
+    sd_stars = sd(stars, na.rm = TRUE)
+  )
+
+# Display the result
+print(statistics_by_moon_phase)
+
+```
+
+The calculated mean and standard deviation of star ratings across the four moon phases reveal that the differences in ratings are minimal. The average star ratings range from 3.75 to 3.79, and the standard deviations are very similar, approximately 1.21 to 1.22 for all phases. **This indicates that the variations in restaurant reviews based on moon phases are small and unlikely to be practically significant.**
+
+
+## Levene's test
+
+
+The Levene's test is used to assess the equality of variances across the different moon phases. This test checks whether the assumption of homogeneity of variances, a key requirement for performing ANOVA, holds true in our dataset.
+
+```{r Levenes test, warning=FALSE}
+
+# Perform Levene's test
+levene_test_mp <- leveneTest(stars ~ factor(moon_phase), data = joined_review_mp)
+
+# Display the results
+print(levene_test_mp)
+```
+With a F-value of 0.1762, conclusion is that the variances across the groups are very similar. A high p-value of 0.9125 means that there is no significant difference in the variances across the groups.
+
+The Levene's test shows that the variances across the moon phases are not significantly different. This means that that the data is ready for ANOVA, as one of the key assumptions of ANOVA (homogeneity of variances) has been satisfied.
+
+## Analysis of Variance
+
+
+The Analysis of Variance (ANOVA) is performed to assess whether there are statistically significant differences in the mean star ratings across the different moon phases. One-way ANOVA is employed in this context because it allows for the comparison of means across multiple independent groups (in this case, the different moon phases) using a single dependent variable (the star ratings). This statistical method assumes that the groups are independent, and it evaluates the null hypothesis that all group means are equal. By analyzing the variance within and between the groups, the results will indicate if the variation in star ratings can be attributed to the different phases of the moon, thus helping to understand any potential influence of lunar cycles on restaurant reviews.
+
+```{r moon phase ANOVA}
+
+# Perform ANOVA - stars as the dependent variable, moon_phase as the independent variable
+anova_result <- aov(stars ~ moon_phase, data = joined_review_mp)
+
+# Display the ANOVA summary
+summary(anova_result)
+
+```
+The p-value obtained (approximately 0.652) indicates that the **differences between the means of the moon phases are not statistically significant.** 
+
+Also, a low F-value (0.545) indicates that the variance between the means of different moon phases is relatively small compared to the variance within each group, **suggesting minimal effects of moon phases on restaurant reviews.**
+
+Since the ANOVA result did not show significance, it suggests that, on average, **the ratings across the moon phases (including the full moon) do not differ significantly from one another.** In other words, the effect of moon phases on the stars ratings is not strong enough to conclude that moon phases have an impact.
+
+## Isolating full moon from other mooh phases
+
+
+This analysis isolates the full moon phase from other moon phases to investigate its potential impact on restaurant reviews. By creating a new variable that distinguishes between reviews during the full moon and other moon phases, the subsequent ANOVA aims to determine if there are significant differences in star ratings when specifically focusing on the full moon. This approach allows for a different view of the relationship between moon phases and review scores.
+
+```{r isolated full moon ANOVA}
+
+# Creating a new variable that groups moon phases
+joined_review_mp$combined_moon_phase <- ifelse(joined_review_mp$moon_phase_int == 3, "Full Moon", "Other Phases")
+
+# Ensure that the new variable is a factor with two levels
+joined_review_mp$combined_moon_phase <- factor(joined_review_mp$combined_moon_phase)
+
+# Running ANOVA with the new grouping
+anova_full_vs_other <- aov(stars ~ combined_moon_phase, data = joined_review_mp)
+
+# Summary of the ANOVA
+anova_summary_full_vs_other <- summary(anova_full_vs_other)
+print(anova_summary_full_vs_other)
+
+
+```
+The p-value obtained from the ANOVA was 0.4, indicating that **there is no statistically significant difference in restaurant reviews during the full moon compared to other moon phases.** This lack of significance suggests that the full moon does not have a distinct impact on guest ratings. 
+
+Additionally, the F-value associated with this analysis was 0.71, which further confirms that the variance between the groups is minimal compared to the variance within the groups, indicating a negligible effect of the full moon on restaurant reviews.
+
+## Visualization of moon phases vs reviews
+
+
+In the section below, data will be visualized as box and violin plot, histogram and ridgeline.  
+
+### Violin plot and Boxplot
+
+
+This visualization combines both violin and box plots to show the distribution of star ratings across different moon phases. The violin plot provides a visual representation of the data density at different star rating values, while the box plot adds summary statistics, such as the median and interquartile ranges. This combination helps in understanding both the distribution shape and the summary statistics simultaneously, allowing for a comprehensive view of how moon phases might influence restaurant ratings.
+
+```{r violin plot}
+
+# Create a violin plot with boxplot to visualize stars by moon phase
+
+ggplot(joined_review_mp, aes(x = moon_phase, y = stars, fill = moon_phase)) +
+  geom_violin(trim = FALSE, alpha = 0.8) +  # Add violin shape
+  geom_boxplot(width = 0.1, position = position_dodge(0.9), outlier.shape = NA, color = "black") +  # Add boxplot inside
+  labs(x = "Moon Phase", y = "Stars", title = "Violin Plot of Stars by Moon Phase") +
+  scale_fill_brewer(palette = "Pastel1") +  # Add a color palette
+  theme_minimal() +  # Use a minimal theme
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),  # Center title and change size
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate x-axis labels for better visibility
+  )
+
+```
+This chart illustrates that the distribution of restaurant reviews across moon phases is nearly identical, indicating that there are no significant differences in star ratings based on the phase of the moon. The y-axis values peak at 5 stars due to a high concentration of data points at this rating, creating a fade-out effect that may suggest values greater than 5. Given the uniformity observed in the plots, further investigation into other factors influencing reviews could provide more insights.
+
+### Histogram of each moon phase
+
+
+The histogram provides insight into the distribution of star ratings across all reviews. By grouping the ratings into bins, it reveals the frequency of different rating values and helps identify any potential skewness or modality within the data. This visualization is useful for quickly assessing the overall rating trends.
+
+```{r histogram, warning=FALSE}
+
+# Create a histogram of stars for each moon phase
+ggplot(joined_review_mp, aes(x = stars, fill = ..count..)) + 
+  geom_histogram(binwidth = 0.5, color = "black", alpha = 0.7) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") + 
+  labs(x = "Stars", y = "Frequency", title = "Histogram of Stars Ratings by Moon Phase") +
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12)
+  ) +
+  facet_wrap(~ moon_phase, ncol = 2)  # Create separate plots for each moon phase
+
+```
+The histogram reveals a slight difference in restaurant reviews between moon phases, with 5-star reviews being the highest during the full moon. While small, this observation is contrary to the initial belief that full moons would negatively impact reviews, based on anecdotal experiences from working in the restaurant industry. Although the difference is not large, it suggests that the full moon may correlate with more positive reviews rather than the disruptive behavior typically expected. 
+
+
+### Ridgeline Plot
+
+
+A ridgeline plot is a great way to visualize the distribution of star ratings across different moon phases, as it allows for the comparison of distributions in a more aesthetically pleasing manner. This type of plot can highlight differences in distribution shapes between groups, making it easier to spot trends and patterns that might not be evident in other visualizations.
+
+```{r ridgeline plot,warnings=FALSE}
+
+# Create a ridgeline plot of stars by moon phase
+ggplot(joined_review_mp, aes(x = stars, y = moon_phase, fill = moon_phase)) +
+  geom_density_ridges(scale = 0.9, alpha = 0.8, color = "white") +
+  scale_fill_viridis_d() +  # Using discrete Viridis colors for moon phases
+  labs(x = "Stars", y = "Moon Phase", title = "Ridgeline Plot of Stars Ratings by Moon Phase") +
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, margin = margin(b = 15)),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.position = "none"
+  )
+
+
+```
+
+The ridgeline plot provides a smooth visual representation of data density, giving a clearer picture of the overall trends. However, as with the histogram, visual analysis alone is not sufficient to draw statistical conclusions. The plot helps emphasize the results already found in our ANOVA and hypothesis tests: any differences between moon phases are minimal.
+
+
+## Exploring the data by consecutive moon phases
+
+
+This section examines the data by focusing on consecutive moon phases, providing insight into how ratings change or remain consistent as the moon moves through its phases. The idea is to detect any potential trends or patterns in guest ratings as we transition between moon phases, especially focusing on whether certain moon phases (like the full moon) affect reviews differently from the others.
+
+The code chunk provided below first sorts the dataset by the formatted_date to ensure chronological order. Then, it creates a new grouping variable, group_id, which identifies sequences of consecutive moon phases based on their integer representation (moon_phase_int). The grouping is established by accumulating counts where the moon phases transition from the fourth phase back to the first phase. Finally, the code filters the data to retain only **complete sequences** of all four moon phases and summarizes the total star ratings for each group. This method allows for a deeper exploration of trends over time, potentially revealing patterns that may not have been evident in prior analyses.
+
+```{r grouping by 4 consecutive moon phases}
+
+# Sort the data by formatted_date
+joined_review_mp <- joined_review_mp %>%
+  arrange(formatted_date)
+
+# Create a grouping variable for consecutive moon phases
+joined_review_mp <- joined_review_mp %>%
+  mutate(
+    group_id = cumsum(diff(c(0, moon_phase_int)) < 0 & lag(moon_phase_int, default = 0) == 4)
+  )
+
+
+# Filter the data to ensure we're only looking at full sequences of 1 to 4
+grouped_data <- joined_review_mp %>%
+  group_by(group_id) %>%
+  filter(all(c(1, 2, 3, 4) %in% moon_phase_int)) %>%
+  summarise(total_stars = sum(stars, na.rm = TRUE), .groups = 'drop')
+
+# Display the result
+print(grouped_data)
+
+```
+
+Now that the data has been grouped by consecutive moon phases, the next step is to assess the homogeneity of variances among these groups. Conducting Levene's test is essential to determine if the assumptions for ANOVA are met.
+
+### Levene's test of data by consecutive moon phases
+
+
+First levene's test must be done to confirm if basic requirements for ANOVA are fulfilled.
+
+```{r levenes test of consecutive moon phases}
+
+# Perform Levene's Test
+levene_test_group_id <- leveneTest(stars ~ factor(group_id), data = joined_review_mp)
+
+# Display the results
+print(levene_test_group_id)
+
+```
+
+
+Since the p-value from the Levene's test is less than 0.05, we reject the null hypothesis, which implies that the variances of star ratings across different group_id groups are significantly different. This indicates that at least one group exhibits a variance that differs from the others, making it inappropriate to proceed with the classic ANOVA under the assumption of equal variances. Given this, alternative approaches need to be considered, starting with further data exploration through visualization.
+
+### Histogram of stars by consecutive moon phases
+
+
+In this case, a histogram was chosen to visualize the total stars by consecutive moon phases (group_id column) as it offers a clearer and more interpretable view of the distribution compared to the box plot. Although box plots were initially considered, the results were too chaotic, making it difficult to extract meaningful insights. Because of that, the histogram provides a more straightforward representation of the data.
+
+
+```{r histogram of consecutive moon phases}
+grouped_stars <- joined_review_mp %>%
+  group_by(group_id) %>%
+  summarise(total_stars = sum(stars, na.rm = TRUE), .groups = 'drop')
+
+# Visualize the distribution of stars with rotated x-axis labels and data labels
+ggplot(grouped_stars, aes(x = factor(group_id), y = total_stars)) +
+  geom_bar(stat = "identity", fill = "skyblue", width = 0.7) +
+  labs(x = "Group ID", y = "Total Stars", title = "Total Stars by Group ID") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotate x-axis labels
+
+```
+
+The histogram highlights significant variations in the number of reviews (stars) across the different periods of four consecutive moon phases (group_id). For example, group_ids 0 to 20 had a notably small number of observations. It was important to assess the total number of observations within these groups to ensure any further analysis or conclusions are based on reliable data. This step helps in deciding the most appropriate method for deeper statistical analysis going forward.
+
+```{r filtering out group_id with low quantity of reviews}
+# Create a new variable considering_removing that filters out group_id 0 through 20
+considering_removing <- joined_review_mp %>%
+  filter(group_id >= 0 & group_id <= 20)
+
+# Count the total stars in this subset
+total_stars_removing <- sum(considering_removing$stars, na.rm = TRUE)
+
+# Display the total stars count
+print(total_stars_removing)
+
+```
+
+To further analyze the impact of moon phases, a subset of the data was created by filtering out group_ids 0 through 20, which had a relatively small number of observations. The total number of reviews in this subset was 1,239, accounting for 12.4% of the total 10,000 observations. By excluding this subset, we aimed to improve the reliability of the analysis.
+
+This filtered data was used to run Levene’s test again, ensuring that the assumptions of ANOVA were met before proceeding with the next stage of analysis.
+
+```{r levenes test on filtered data}
+
+# Filter the data to include only group_id greater than 20
+filtered_data <- joined_review_mp %>%
+  filter(group_id > 20)
+
+# Perform Levene's Test on filtered data
+levene_test_filtered <- leveneTest(stars ~ factor(group_id), data = filtered_data)
+
+# Display the result
+print(levene_test_filtered)
+
+
+```
+
+Even after filtering out group_id 0 through 20, the results from Levene’s test indicate that significant differences in variances persist across the remaining group_id levels. This suggests that the variances between some groups are still not homogeneous, violating one of the key assumptions for running ANOVA.
+
+To gain further insight into this variance, a new visualization was created. This should help identify whether additional transformations or adjustments to the data are necessary before proceeding with further analysis.
+
+
+```{r histogram of filtered data}
+
+# Create a histogram to visualize the distribution of stars for each group_id in the filtered data
+histogram_gid <- ggplot(filtered_data, aes(x = factor(group_id), y = stars, fill = factor(group_id))) +
+  geom_bar(stat = "identity") +
+  labs(x = "Group ID", y = "Total Stars", title = "Histogram of Stars by Group ID (Filtered Data)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) # Rotate x-axis labels for readability
+
+# Print the histogram plot
+print(histogram_gid)
+
+```
+Observing the current histogram, several group group_id (21, 23, and 25) stand out due to their variances. While filtering them out might seem like a potential solution, it would result in excessive data reduction, as we have already excluded 12.4% of observations. Instead of removing more data to fit the assumptions of classic ANOVA, a more robust approach is to use Welch's ANOVA, which handles unequal variances across groups. This method allows us to include all 10,000 reviews in the analysis without further sample reduction.
+
+```{r Welch ANOVA on consecutive moon phases}
+
+# Perform Welch's ANOVA
+welch_anova <- oneway.test(stars ~ factor(group_id), data = joined_review_mp, var.equal = FALSE)
+
+# Print the results
+print(welch_anova)
+
+```
+
+Since the p-value from Welch's ANOVA is greater than 0.05, we fail to reject the null hypothesis. This means that **there is no statistically significant difference in the mean star ratings across the different group_ids representing consecutive moon phases.** In other words, the variations in star ratings between groups are likely due to random chance, and there is no strong evidence to suggest that group_id (or moon phases) have a meaningful impact on the average review ratings.
+
+## Conclusion
+
+
+Having worked in the restaurant industry, I often heard people joke that full moons brought out unusual behavior in guests. I decided to take an analytical approach to this anecdote and see if there was any truth behind it by analyzing restaurant reviews and the moon phases.
+
+After thoroughly analyzing the data, including isolating the full moon and grouping consecutive moon phases, the results showed no significant differences in the reviews across moon phases. Despite my initial expectation that full moons might lead to lower reviews, the analysis revealed that any variations in the data are likely due to chance rather than the lunar cycle.
+
+One limitation of the analysis is that I didn’t have information on where the reviews were geographically located, which could be an interesting aspect to explore further—perhaps focusing on specific regions. As a beginner in data analytics, this project was a valuable learning experience, and I welcome any suggestions on how to improve the approach or apply different methods in future analyses.
+
+Overall, the project didn't confirm the myth, but it allowed me to deepen my understanding of the data analysis process and try different techniques.
