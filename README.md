@@ -1,5 +1,3 @@
-# exploring-lunar-cycles-restaurant-reviews
-
 Title: Exploring Lunar Cycles and Restaurant Reviews: Does the Full Moon Affect Guest Ratings?
 
 Project Overview:
